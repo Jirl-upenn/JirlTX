@@ -1,6 +1,7 @@
 set(IMGUI_SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/imgui)
 
 add_library(imgui STATIC)
+set_target_properties(imgui PROPERTIES CXX_STANDARD 11)
 
 target_sources(imgui PRIVATE
     ${IMGUI_SOURCE_DIR}/imgui.cpp

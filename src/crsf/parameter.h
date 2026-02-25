@@ -131,7 +131,7 @@ struct CommandParameter {
 
 using ParameterValue = std::variant<std::monostate, IntegerParameter<u8>, IntegerParameter<i8>, IntegerParameter<u16>, IntegerParameter<i16>, IntegerParameter<u32>, IntegerParameter<i32>, FloatParameter, TextSelectionParameter, FolderParameter, InfoParameter, CommandParameter>;
 
-constexpr ParameterValue GetParameterValue(std::span<u8> data, ParameterType type) {
+inline ParameterValue GetParameterValue(std::span<u8> data, ParameterType type) {
     switch (type) {
         case ParameterType::Uint8:
             return IntegerParameter<u8>(data);

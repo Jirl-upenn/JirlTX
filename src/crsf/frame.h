@@ -300,7 +300,7 @@ struct RadioIdFrame : public ExtFrame {
 
 using FrameV = std::variant<BatterySensorFrame, LinkStatisticsFrame, RcChannelsFrame, PingFrame, DeviceInfoFrame, ParameterSettingsEntryFrame, ParameterReadFrame, ParameterWriteFrame, RadioIdFrame>;
 
-constexpr FrameV GetFrame(std::span<u8> data, FrameType type) {
+inline FrameV GetFrame(std::span<u8> data, FrameType type) {
     return [&]<size_t... Is>(std::index_sequence<Is...>) -> FrameV {
         std::optional<FrameV> result{};
         auto TryGetFrame{[&](auto index) -> bool {

@@ -14,6 +14,8 @@
     #define SERIAL_WIN 1
 #elif defined(__linux__)
     #define SERIAL_LINUX 1
+#elif defined(__APPLE__)
+    #define SERIAL_MACOS 1
 #else
     #error "Unsupported platform"
 #endif
@@ -38,7 +40,7 @@ class SerialPort {
   private:
     #if SERIAL_WIN
         HANDLE handle{INVALID_HANDLE_VALUE};
-    #elif SERIAL_LINUX
+    #elif SERIAL_LINUX || SERIAL_MACOS
         int fd{-1};
     #endif
 

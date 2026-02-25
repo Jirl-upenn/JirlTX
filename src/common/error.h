@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#include <cstdlib>
+#include <exception>
 #include <fmt/format.h>
 #include <stdexcept>
 

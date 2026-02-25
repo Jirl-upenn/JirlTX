@@ -30,6 +30,22 @@
     #include <sys/ioctl.h>
     #include <sys/select.h>
     #include <sys/stat.h>
+#elif SERIAL_MACOS
+    #include <filesystem>
+
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <termios.h>
+    #include <unistd.h>
+
+    #include <sys/ioctl.h>
+    #include <sys/select.h>
+    #include <sys/stat.h>
+
+    // IOSSIOSPEED from <IOKit/serial/ioss.h>, defined here to avoid IOKit framework dependency
+    #ifndef IOSSIOSPEED
+        #define IOSSIOSPEED _IOW('T', 2, speed_t)
+    #endif
 #else
     #error "Unsupported platform"
 #endif
@@ -172,6 +188,14 @@ std::vector<SerialPortInfo> ListSerialPorts() {
                           });
     }
 
+#elif SERIAL_MACOS
+
+    for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
+        std::string name{entry.path().filename().string()};
+        if (name.starts_with("cu."))
+            ports.emplace_back(SerialPortInfo{entry.path().string(), name, ""});
+    }
+
 #endif
 
     return ports;
@@ -294,6 +318,35 @@ SerialPort::SerialPort(std::string devicePath, size_t baudRate) {
     if (tcflow(fd, TCOON) == -1)
         throw Exception("Failed to start serial port ({}): {}", devicePath, strerror(errno));
 
+#elif SERIAL_MACOS
+
+    fd = open(devicePath.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (fd == -1)
+        throw Exception("Failed to open serial port ({}): {}", devicePath, strerror(errno));
+
+    // Clear O_NONBLOCK after opening (needed on macOS to avoid blocking on open for cu.* ports)
+    if (fcntl(fd, F_SETFL, 0) == -1)
+        throw Exception("Failed to clear O_NONBLOCK ({}): {}", devicePath, strerror(errno));
+
+    if (tcflush(fd, TCIOFLUSH) == -1)
+        throw Exception("Failed to flush serial port ({}): {}", devicePath, strerror(errno));
+
+    struct termios tty{};
+    tty.c_cflag = CREAD | CLOCAL | CS8;
+    tty.c_cc[VMIN] = 0;
+    tty.c_cc[VTIME] = 1;
+
+    cfsetospeed(&tty, B9600);
+    cfsetispeed(&tty, B9600);
+
+    if (tcsetattr(fd, TCSANOW, &tty) != 0)
+        throw Exception("Failed to set serial port state ({}): {}", devicePath, strerror(errno));
+
+    // Set the actual baud rate using IOSSIOSPEED (supports arbitrary rates)
+    speed_t speed = static_cast<speed_t>(baudRate);
+    if (ioctl(fd, IOSSIOSPEED, &speed) == -1)
+        throw Exception("Failed to set baud rate ({}): {}", devicePath, strerror(errno));
+
 #endif
 }
 
@@ -303,7 +356,7 @@ SerialPort::~SerialPort() {
     if (handle != INVALID_HANDLE_VALUE)
         CloseHandle(handle);
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     if (fd != -1) {
         tcdrain(fd);
@@ -323,7 +376,7 @@ bool SerialPort::IsOpen() {
 
     return true;
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     struct stat st {};
     if (fstat(fd, &st) == -1 || st.st_nlink == 0)
@@ -408,7 +461,7 @@ std::optional<u8> SerialPort::ReadByte(std::chrono::time_point<std::chrono::stea
     if (bytesRead == 0)
         return std::nullopt;
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     fd_set readfds;
     FD_ZERO(&readfds);
@@ -422,7 +475,7 @@ std::optional<u8> SerialPort::ReadByte(std::chrono::time_point<std::chrono::stea
         constexpr int UsInSecond{1000000};
         struct timeval tv {
             .tv_sec = std::chrono::duration_cast<std::chrono::seconds>(timeout - std::chrono::steady_clock::now()).count(),
-            .tv_usec = std::chrono::duration_cast<std::chrono::microseconds>(timeout - std::chrono::steady_clock::now()).count() % UsInSecond,
+            .tv_usec = static_cast<decltype(timeval::tv_usec)>(std::chrono::duration_cast<std::chrono::microseconds>(timeout - std::chrono::steady_clock::now()).count() % UsInSecond),
         };
 
         fd_set readfds;
@@ -455,7 +508,7 @@ void SerialPort::Read(std::span<u8> buffer) {
     if (bytesRead != buffer.size())
         throw Exception("Failed to read from serial port: expected {}, got {}", buffer.size(), bytesRead);
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     while (buffer.size() > 0) {
         ssize_t bytesRead{read(fd, buffer.data(), buffer.size())};
@@ -486,7 +539,7 @@ void SerialPort::Write(std::span<u8> buffer) {
     if (bytesWritten != buffer.size())
         throw Exception("Failed to write to serial port: expected {}, got {}", buffer.size(), bytesWritten);
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     while (buffer.size() > 0) {
         ssize_t bytesWritten{write(fd, buffer.data(), buffer.size())};
@@ -504,7 +557,7 @@ void SerialPort::SetDTR(bool state) {
     if (!EscapeCommFunction(handle, state ? SETDTR : CLRDTR))
         throw Exception("Failed to set DTR: {}", GetLastError());
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     if (ioctl(fd, state ? TIOCMBIS : TIOCMBIC, TIOCM_DTR) == -1)
         throw Exception("Failed to set DTR: {}", strerror(errno));
@@ -517,7 +570,7 @@ void SerialPort::SetRTS(bool state) {
     if (!EscapeCommFunction(handle, state ? SETRTS : CLRRTS))
         throw Exception("Failed to set RTS: {}", GetLastError());
 
-#elif SERIAL_LINUX
+#elif SERIAL_LINUX || SERIAL_MACOS
 
     if (ioctl(fd, state ? TIOCMBIS : TIOCMBIC, TIOCM_RTS) == -1)
         throw Exception("Failed to set RTS: {}", strerror(errno));

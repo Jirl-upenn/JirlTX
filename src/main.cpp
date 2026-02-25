@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright © Mark Collins
  */
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <condition_variable>
@@ -28,7 +29,8 @@ class ElrsManager {
     std::condition_variable stateCV;
 
     std::vector<crsf::Device> devices;
-    std::jthread rxThread, txThread;
+    std::thread rxThread, txThread;
+    std::atomic<bool> stopFlag{false};
     bool earlyPing{}; //!< Send a ping frame early, this is used when a packet with an unrecognized device is found.
     size_t pingsSinceLastRx{}; //!< Number of pings sent since the last received packet.
 
@@ -52,9 +54,9 @@ class ElrsManager {
         return &*it;
     }
 
-    void RxThread(std::stop_token stopToken) {
+    void RxThread() {
         SetThreadName("ELRS RX");
-        while (!stopToken.stop_requested()) {
+        while (!stopFlag.load()) {
             try {
                 std::optional<crsf::FrameV> frameV{crsfInterface.ReceiveFrame(std::chrono::steady_clock::now() + std::chrono::milliseconds{100})};
                 // Note: Timeouts are important so that stop tokens are checked frequently.
@@ -125,14 +127,14 @@ class ElrsManager {
         }
     }
 
-    void TxThread(std::stop_token stopToken) {
+    void TxThread() {
         SetThreadName("ELRS TX");
 
         std::chrono::time_point<std::chrono::steady_clock> wakeTime{std::chrono::steady_clock::now()}, pingTime{wakeTime};
         constexpr std::chrono::milliseconds WakeInterval{100}, PingInterval{250};
 
         bool recurringException{};
-        while (!stopToken.stop_requested()) {
+        while (!stopFlag.load()) {
             std::unique_lock lock{stateMutex};
             stateCV.wait_until(lock, wakeTime > pingTime ? wakeTime : pingTime);
 
@@ -183,6 +185,13 @@ class ElrsManager {
     }
 
   public:
+    ~ElrsManager() {
+        stopFlag = true;
+        stateCV.notify_all();
+        if (rxThread.joinable()) rxThread.join();
+        if (txThread.joinable()) txThread.join();
+    }
+
     bool requestStop{}; //!< If any of the threads have requested a stop, this happens when they can no longer continue due to an error or the serial port being closed.
 
     ElrsManager(std::string portName, size_t baudRate)
