@@ -526,7 +526,7 @@ int main(int argv, char** args) {
             fullscreen = true;
     }
 
-    SDL_Window* window{SDL_CreateWindow("DeckTX", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | (fullscreen ? SDL_WINDOW_FULLSCREEN : 0))};
+    SDL_Window* window{SDL_CreateWindow("DeckTX", 1280, 720, fullscreen ? SDL_WINDOW_FULLSCREEN : 0)};
     if (window == nullptr)
         throw Exception("SDL window creation failed: {}", SDL_GetError());
 
