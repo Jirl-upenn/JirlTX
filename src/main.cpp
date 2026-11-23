@@ -364,8 +364,8 @@ class ElrsManager {
                         return static_cast<uint16_t>(crsfValue);
                     }};
 
-                    auto getButtonToggle{[&](int button) -> u16 {
-                        return buttonStates[button].toggled ? CrsfChannelMid : CrsfChannelMin;
+                    auto getButtonToggle{[&](int button, u16 onValue = CrsfChannelMid) -> u16 {
+                        return buttonStates[button].toggled ? onValue : CrsfChannelMin;
                     }};
 
                     crsf::RcChannelsData crsfChannels{};
@@ -373,7 +373,7 @@ class ElrsManager {
                     crsfChannels.set(1, getAxisValue(SDL_GAMEPAD_AXIS_RIGHTY, true));
                     crsfChannels.set(2, getCombinedTriggerValue(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
                     crsfChannels.set(3, getAxisValue(SDL_GAMEPAD_AXIS_LEFTX));
-                    crsfChannels.set(4, getButtonToggle(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+                    crsfChannels.set(4, getButtonToggle(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, CrsfChannelMax)); // Aux 1 (arm): full high when toggled on.
                     crsfChannels.set(5, getButtonToggle(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER));
                     crsfChannels.set(6, getButtonToggle(SDL_GAMEPAD_BUTTON_START));
                     crsfChannels.set(7, getButtonToggle(SDL_GAMEPAD_BUTTON_BACK));
