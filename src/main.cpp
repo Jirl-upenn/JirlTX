@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0
  * Copyright © Mark Collins
  */
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -20,6 +21,16 @@
 #include "crsf/crsf.h"
 #include "crsf/parameter.h"
 #include "serial/serial.h"
+
+/* DJI FPV Remote Controller (USB VID 0x2CA3, PID 0x1020, reports as "DJI C5").
+ * SDL has no built-in mapping, so it's only visible as a raw joystick. Layout: a0 = right X (roll), a1 = right Y (pitch),
+ * a2 = left Y (throttle, non-centering), a3 = left X (yaw). The throttle is split across both triggers so that the
+ * combined trigger logic below spans the full range.
+ */
+constexpr u16 DjiVendorId{0x2CA3}, DjiProductId{0x1020};
+constexpr const char* DjiGamepadMapping{"03000000a32c00002010000000000000,DJI FPV Remote Controller,"
+                                        "leftx:a3,lefttrigger:-a2,righttrigger:+a2,rightx:a0,righty:a1~,leftshoulder:b2,"};
+constexpr i32 DjiAxisRange{21120}; //!< The DJI controller's sticks only reach +/-21120 (660 counts * 32) rather than the full i16 range.
 
 class ElrsManager {
   private:
@@ -249,10 +260,11 @@ class ElrsManager {
                     gamepad = nullptr;
                 }
                 
-                if (SDL_HasJoystick()) {
-                    int joystickCount{};
-                    auto joysticks{SDL_GetGamepads(&joystickCount)};
+                int joystickCount{};
+                SDL_JoystickID* joysticks{SDL_GetGamepads(&joystickCount)};
+                SCOPE_EXIT(SDL_free(joysticks));
 
+                if (joysticks && joystickCount > 0) {
                     if (joystickId == 0)
                         joystickId = joysticks[0];
                     
@@ -296,8 +308,16 @@ class ElrsManager {
                     constexpr u16 CrsfChannelMin{172 + 5}, CrsfChannelMid{992}, CrsfChannelMax{1811 - 5}, CrsfChannelDiff{CrsfChannelMax - CrsfChannelMin};
                     constexpr u16 StickDeadzone{2000}, TriggerDeadzone{100};
 
+                    bool isDjiController{SDL_GetGamepadVendor(gamepad) == DjiVendorId && SDL_GetGamepadProduct(gamepad) == DjiProductId};
+                    auto readAxis{[&](SDL_GamepadAxis axis) -> i16 {
+                        i32 value{SDL_GetGamepadAxis(gamepad, axis)};
+                        if (isDjiController)
+                            value = std::clamp<i32>(value * (INT16_MAX + 1) / DjiAxisRange, INT16_MIN, INT16_MAX);
+                        return static_cast<i16>(value);
+                    }};
+
                     auto getAxisValue{[&](SDL_GamepadAxis axis, bool invert = false) -> u16 {
-                        i16 inputValue{SDL_GetGamepadAxis(gamepad, axis)};
+                        i16 inputValue{readAxis(axis)};
                         if (invert) {
                             if (inputValue == INT16_MIN)
                                 inputValue = INT16_MAX;
@@ -323,12 +343,12 @@ class ElrsManager {
                      * Note: Both the axes must be triggers, that are in the range of 0 to 32767.
                      */
                     auto getCombinedTriggerValue{[&](SDL_GamepadAxis negativeAxis, SDL_GamepadAxis positiveAxis, bool invert = false) -> u16 {
-                        i16 negativeInputValue{SDL_GetGamepadAxis(gamepad, negativeAxis)};
+                        i16 negativeInputValue{readAxis(negativeAxis)};
                         if (negativeInputValue < TriggerDeadzone)
                             negativeInputValue = 0;
                         u32 negativeUnsignedValue{static_cast<u32>(negativeInputValue)};
 
-                        i16 positiveInputValue{SDL_GetGamepadAxis(gamepad, positiveAxis)};
+                        i16 positiveInputValue{readAxis(positiveAxis)};
                         if (positiveInputValue < TriggerDeadzone)
                             positiveInputValue = 0;
                         u32 positiveUnsignedValue{static_cast<u32>(positiveInputValue)};
@@ -515,6 +535,9 @@ int main(int argv, char** args) {
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD) != 0)
         throw Exception("SDL initialization failed: {}", SDL_GetError());
+
+    if (SDL_AddGamepadMapping(DjiGamepadMapping) == -1)
+        fmt::print("Failed to add DJI controller mapping: {}\n", SDL_GetError());
 
     bool fullscreen{};
     for (int i{}; i < argv; i++) {
