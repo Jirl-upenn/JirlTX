@@ -3,6 +3,8 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <string>
@@ -298,7 +300,26 @@ struct RadioIdFrame : public ExtFrame {
     }
 };
 
-using FrameV = std::variant<BatterySensorFrame, LinkStatisticsFrame, RcChannelsFrame, PingFrame, DeviceInfoFrame, ParameterSettingsEntryFrame, ParameterReadFrame, ParameterWriteFrame, RadioIdFrame>;
+/**
+ * @brief Flight mode telemetry from the flight controller, a null-terminated string such as "ACRO", "AIR", "STAB" or "!FS!".
+ * @note Some Betaflight versions append '*' to the mode when the craft is disarmed, others don't mark it.
+ */
+struct FlightModeFrame : public Frame {
+    static constexpr FrameType Type{FrameType::FlightMode};
+
+    std::string mode;
+
+    FlightModeFrame(std::span<u8> data)
+        : Frame(data) {
+        // frameSize (data[1]) counts the type byte, payload and CRC.
+        size_t payloadSize{data[1] >= FrameTypeSize + FrameCrcSize ? data[1] - FrameTypeSize - FrameCrcSize : 0};
+        payloadSize = std::min(payloadSize, data.size() > HeaderSize ? data.size() - HeaderSize : 0);
+        const char* payload{reinterpret_cast<const char*>(data.data() + HeaderSize)};
+        mode.assign(payload, strnlen(payload, payloadSize));
+    }
+};
+
+using FrameV = std::variant<BatterySensorFrame, LinkStatisticsFrame, RcChannelsFrame, FlightModeFrame, PingFrame, DeviceInfoFrame, ParameterSettingsEntryFrame, ParameterReadFrame, ParameterWriteFrame, RadioIdFrame>;
 
 inline FrameV GetFrame(std::span<u8> data, FrameType type) {
     return [&]<size_t... Is>(std::index_sequence<Is...>) -> FrameV {

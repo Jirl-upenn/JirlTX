@@ -48,6 +48,8 @@ class ElrsManager {
     std::optional<crsf::LinkStatisticsData> linkStatistics{};
     std::optional<crsf::RcChannelsFrame> channelFrame{};
     std::optional<crsf::BatterySensorData> batteryData{};
+    std::optional<std::string> flightMode{}; //!< Flight mode reported by the flight controller via telemetry.
+    std::chrono::steady_clock::time_point flightModeTime{}; //!< When the flight mode was last received.
 
     SDL_Gamepad* gamepad{};
     SDL_JoystickID joystickId{};
@@ -80,6 +82,11 @@ class ElrsManager {
 
                     if constexpr (std::is_same_v<T, crsf::BatterySensorFrame>) {
                         batteryData = frame.battery;
+                    } else if constexpr (std::is_same_v<T, crsf::FlightModeFrame>) {
+                        if (flightMode != frame.mode)
+                            fmt::print("Flight mode: '{}'\n", frame.mode);
+                        flightMode = frame.mode;
+                        flightModeTime = std::chrono::steady_clock::now();
                     } else if constexpr (std::is_same_v<T, crsf::LinkStatisticsFrame>) {
                         linkStatistics = frame.statistics;
                     } else if constexpr (std::is_same_v<T, crsf::PingFrame>) {
@@ -247,6 +254,30 @@ class ElrsManager {
                     }
                 }
 
+                ImGui::Separator();
+            }
+
+            if (flightMode) {
+                // Some Betaflight versions append '*' to the mode while disarmed.
+                std::string mode{*flightMode};
+                bool disarmed{!mode.empty() && mode.back() == '*'};
+                if (disarmed)
+                    mode.pop_back();
+                bool airMode{mode == "AIR"};
+                auto age{std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - flightModeTime)};
+
+                ImGui::Text("Flight Mode:");
+                ImGui::SameLine();
+                ImGui::TextColored(airMode ? ImVec4(1.0f, 0.6f, 0.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", mode.c_str());
+                // Only some Betaflight versions mark disarmed with '*'. Without it, the arm state is unknown, so nothing is shown.
+                if (disarmed) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(Disarmed)");
+                }
+                if (age > std::chrono::seconds{1}) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "[stale: %.1fs old]", age.count() / 1000.0f);
+                }
                 ImGui::Separator();
             }
 
